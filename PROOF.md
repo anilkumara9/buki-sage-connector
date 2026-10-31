@@ -1,8 +1,9 @@
 # Proof Notebook — Buki × Sage Connector
 
-**Submission type: Your Plan — the first 4 boxes only**
+**This submission is the plan only — the first 4 boxes.**
 **Due: Day 3 / Tuesday 3 Nov 2026 at 11:59 pm**
-Code & Notes are NOT submitted now. They are the Build Phase (around 10 days) — daily notes are logged as I build, and the completed project is submitted then, when it is tested and working.
+
+I am not submitting final code at this stage. Code and notes are the build phase, which runs about 10 days in total. I will log notes each day as I build, and the finished project goes in at the end of that phase, when it is tested and working.
 
 ---
 
@@ -23,19 +24,20 @@ It syncs customer balances and ledger entries from Sage directly into Buki for f
 
 ## 4. Your plan, by the end of day 3
 
-**Day 1 — Sunday 1 Nov: Bootstrap and sandbox auth**
-Stand up the base TypeScript/Node connector and authenticate against the Sage sandbox. Implement the OAuth2 PKCE flow with automated token refresh and secure credential storage, and verify the token handshake in the sandbox.
+**Day 1 — Sunday 1 Nov: Set the connector up and sort the Sage login**
+I will stand up the base connector in TypeScript and Node, and get it authenticating against the Sage sandbox. That means the OAuth2 PKCE flow, tokens that refresh themselves, and somewhere safe to keep them. I want the token handshake verified in the sandbox before I build anything on top of it.
 
-**Day 2 — Monday 2 Nov: Entity mappings and type validation**
-Map the core ledger entities — customers, invoices, payments — to Buki schemas. Create Zod validation schemas for Sage customer, ledger, and sales invoice payloads, handling currency fields, precision, and null values gracefully.
+**Day 2 — Monday 2 Nov: Work out how Sage data becomes Buki data**
+I will map the three things at the heart of this — customers, invoices and payments — from Sage's shapes into Buki's. I will write Zod schemas for the Sage payloads so anything unexpected gets caught at the door, and I will take care with the money fields, currency and the values Sage sometimes just leaves out.
 
-**Day 3 — Tuesday 3 Nov: Sample sync, check, and submit this plan**
-Run an end-to-end sync on a sample batch to verify data consistency between Sage and Buki. Formulate the founder question below. Submit this plan by 11:59 pm for founder review and early feedback, while course correction is still cheap.
+**Day 3 — Tuesday 3 Nov: Prove it on a sample batch, then send this plan**
+I will run a sync end to end on a sample batch and check that what lands in Buki actually matches what was in Sage. Then I will send this plan in by 11:59 pm, so the founder can look at the direction and tell me if I am off course while changing course is still cheap.
 
-Founder question: Does Buki require bidirectional status sync back to Sage, or read-only ingestion?
+And the question I need answered: does Buki require bidirectional status sync back to Sage, or is read-only ingestion enough? I have planned this as read only, and it changes the size of the job quite a lot if that is wrong.
 
 ---
 
-## Code & Notes — Build Phase (not this submission)
-The entire challenge spans around 10 days. I will log daily notes as I build, and submit the completed project when it is tested and working.
-Working repo (scaffold only at plan stage, not the final code submission): https://github.com/anilkumara9/buki-sage-connector
+## Code & Notes — the build phase (not this submission)
+The challenge runs about 10 days in total. I am logging notes daily as I build, in the repo and in the README there, and I will submit the completed project when it is tested and working.
+
+Work so far lives here, as a starting point rather than a final submission: https://github.com/anilkumara9/buki-sage-connector

@@ -1,72 +1,71 @@
 # Buki × Sage Connector
 
-> Syncs customer balances and ledger entries from Sage Accounting directly into Buki for finance teams, so they get real-time, clean data without manual exports.
+I built this connector to sync customer balances and ledger entries from Sage Accounting into Buki, so finance teams stop moving that data around by hand with exports.
 
-**Status:** Day 3 plan ready for founder review (due Tuesday 3 Nov 2026, 11:59 pm). The work described below is the three-day record in Section 6 — Day 1 bootstrap and auth, Day 2 mappings, Day 3 sync, tests and plan. Code & Notes continue in the Build Phase (around 10 days in total) — daily notes are logged as the build progresses, and the completed project is submitted at the end of that phase, when it is tested and working.
+Right now this repo holds my plan for the work and the first working version of the connector itself. The plan (the first 4 boxes in [`PROOF.md`](./PROOF.md)) is the Day 3 submission, due Tuesday 3 Nov 2026 at 11:59 pm. The build carries on after that — the whole challenge runs about 10 days, I am logging notes as I go, and the finished project goes in at the end of that phase, once it is tested and working properly.
 
-**Repository:** https://github.com/anilkumara9/buki-sage-connector
-**Proof Notebook:** See [`PROOF.md`](./PROOF.md) for the Day 3 plan submission (the first 4 boxes).
-
----
-
-## Table of Contents
-
-1. [The Problem](#1-the-problem)
-2. [What This Connector Does](#2-what-this-connector-does)
-3. [Assumptions](#3-assumptions)
-4. [Architecture](#4-architecture)
-5. [Tech Stack](#5-tech-stack)
-6. [What Was Done in Three Days](#6-what-was-done-in-three-days)
-   - [Day 1 — Bootstrap, Schema and Sandbox Auth](#day-1--sunday-1-nov-2026-bootstrap-schema-and-sandbox-auth)
-   - [Day 2 — Entity Mappings and Type Validation](#day-2--monday-2-nov-2026-entity-mappings-and-type-validation)
-   - [Day 3 — Polling Engine, Sample Sync, Tests and Plan Submission](#day-3--tuesday-3-nov-2026-polling-engine-sample-sync-tests-and-plan-submission)
-7. [Authentication — OAuth2 with PKCE](#7-authentication--oauth2-with-pkce)
-8. [Entity Mappings — Sage to Buki](#8-entity-mappings--sage-to-buki)
-9. [Sync Engine — How a Sync Runs](#9-sync-engine--how-a-sync-runs)
-10. [Error Handling and Resilience](#10-error-handling-and-resilience)
-11. [Test List and Test Results](#11-test-list-and-test-results)
-12. [Project Structure](#12-project-structure)
-13. [How to Run It](#13-how-to-run-it)
-14. [API Endpoints](#14-api-endpoints)
-15. [Configuration](#15-configuration)
-16. [Deployment — Staging](#16-deployment--staging)
-17. [Current Status, Limitations and Next Steps](#17-current-status-limitations-and-next-steps)
-18. [Open Question for the Founder](#18-open-question-for-the-founder)
+Repo: https://github.com/anilkumara9/buki-sage-connector
 
 ---
 
-## 1. The Problem
+## Contents
 
-Finance teams that use Sage for accounting and Buki for their finance workflow have to move data between the two systems by hand — exporting customer lists and ledger entries from Sage, cleaning the files, and importing them into Buki. That process is:
+1. [Why this exists](#1-why-this-exists)
+2. [What it does](#2-what-it-does)
+3. [What I am assuming](#3-what-i-am-assuming)
+4. [How it is put together](#4-how-it-is-put-together)
+5. [Tech I used](#5-tech-i-used)
+6. [What I did in the first three days](#6-what-i-did-in-the-first-three-days)
+   - [Day 1 — Getting the connector up and sorting Sage auth](#day-1--sunday-1-nov-2026-getting-the-connector-up-and-sorting-sage-auth)
+   - [Day 2 — Mapping Sage data into Buki's shape](#day-2--monday-2-nov-2026-mapping-sage-data-into-bukis-shape)
+   - [Day 3 — The sync engine, a sample run, tests, and the plan](#day-3--tuesday-3-nov-2026-the-sync-engine-a-sample-run-tests-and-the-plan)
+7. [How the Sage login works](#7-how-the-sage-login-works)
+8. [How Sage fields map to Buki fields](#8-how-sage-fields-map-to-buki-fields)
+9. [How a sync actually runs](#9-how-a-sync-actually-runs)
+10. [What happens when things go wrong](#10-what-happens-when-things-go-wrong)
+11. [Tests I wrote first, and how they went](#11-tests-i-wrote-first-and-how-they-went)
+12. [What's in the repo](#12-whats-in-the-repo)
+13. [Running it yourself](#13-running-it-yourself)
+14. [The HTTP endpoints](#14-the-http-endpoints)
+15. [Settings](#15-settings)
+16. [Putting it on a staging server](#16-putting-it-on-a-staging-server)
+17. [Where it stands, honestly](#17-where-it-stands-honestly)
+18. [The one question I need the founder to answer](#18-the-one-question-i-need-the-founder-to-answer)
 
-- **Slow** — the data in Buki is only as fresh as the last manual export.
-- **Error-prone** — balances, tax amounts and currencies can be mistyped, dropped or duplicated during manual handling.
-- **Hard to trust** — if a record is malformed, there is no clear log of what failed and why.
+---
 
-## 2. What This Connector Does
+## 1. Why this exists
 
-This connector removes the manual step. It connects to the Sage Accounting API, reads customer balances and ledger entries (sales invoices and payments), validates and converts them into Buki's shape, and stores them in Buki — incrementally, so after the first sync it only pulls records that have changed.
+If a team keeps its accounts in Sage and does its finance work in Buki, somebody has to carry the data across. In practice that means exporting customers and ledger entries from Sage, tidying the file up, and importing it into Buki by hand.
 
-For the finance team using Buki, that means:
+I have seen how that kind of job goes. The copy in Buki is only as fresh as the last export, a balance gets typed wrong, a tax figure goes missing, and when something does not add up there is no record of what failed or why. It is slow, and worse, nobody fully trusts the numbers at the end of it.
 
-- Customer balances in Buki mirror what is in Sage.
-- Invoices and payments arrive as clean ledger entries, with amounts in a format that does not drift due to floating-point rounding.
-- A bad record (for example, an invoice with a missing tax amount) is logged with a clear reason and skipped — it does not crash the sync or silently corrupt the ledger.
+This connector is my attempt to take that job away completely.
 
-The connector is **read-only by design** at this stage: it ingests data from Sage into Buki and never writes back to Sage. Whether that should change is the open question for the founder (see Section 18).
+## 2. What it does
 
-## 3. Assumptions
+It connects to the Sage Accounting API, reads customers, sales invoices and payments, checks every record, converts it into the shape Buki expects, and stores it there. The first run brings over the recent history. Every run after that only pulls what has changed since the last one.
 
-The brief does not specify everything, so the following assumptions were made and recorded in the Proof Notebook before any code was written:
+For the finance team, that means three things:
+
+- The balances they see in Buki are the balances that are actually in Sage.
+- Invoices and payments turn up as tidy ledger entries, with the money handled in a way that does not slowly drift because of rounding.
+- If one record is broken — say an invoice turns up with no tax amount on it — that record gets logged with the reason and skipped. It does not crash the whole sync, and it does not quietly slip into the ledger either.
+
+One thing it deliberately does not do: write anything back to Sage. It is read only for now. Whether it should stay that way is the question at the end of this README.
+
+## 3. What I am assuming
+
+The brief did not spell everything out, so I wrote my assumptions down in the Proof Notebook before I wrote any code. Here they are, with why each one matters:
 
 | # | Assumption | Why it matters |
 |---|------------|----------------|
-| 1 | Read-only permissions are sufficient for the initial sync. | The connector requests access to read Sage data only; it does not need write scopes to prove the ingestion flow. |
-| 2 | Sage API returns standard schema structures without custom field overrides. | Validation schemas are built against Sage's documented, standard payload shapes. Custom fields would need to be added to the schemas later. |
-| 3 | Pagination uses standard cursor tokens rather than manual offset limits. | The sync engine follows Sage's `$next` cursor from page to page instead of guessing page numbers and offsets. |
-| 4 | Historical data ingestion is scoped to active accounts from the past 12 months. | The first sync stays bounded and relevant instead of importing an entire accounting history, including inactive accounts. |
+| 1 | Read only access is enough for the first version. | Proving the import works does not need write access to anyone's accounts, so I am not asking for it. |
+| 2 | Sage sends back its standard shapes, with no custom fields bolted on. | My validation is written against Sage's documented payloads. If a real tenant has custom fields, those need adding to the schemas later. |
+| 3 | Pagination works on Sage's cursor tokens, not on page numbers I work out myself. | So the sync just follows Sage's `$next` link from page to page instead of guessing offsets. |
+| 4 | The first import only needs active accounts from the last 12 months. | That keeps the first sync small and relevant instead of dragging in years of history and dead accounts. |
 
-## 4. Architecture
+## 4. How it is put together
 
 ```
                          OAuth2 + PKCE (S256)
@@ -101,354 +100,337 @@ The brief does not specify everything, so the following assumptions were made an
                                                      GET /ledger · /auth/sage
 ```
 
-**Key design choices**
+A few choices in there are worth explaining:
 
-- **Amounts are stored in minor units** (for example, £120.00 is stored as `12000`). This avoids floating-point drift in a financial ledger.
-- **One bad record never kills a sync.** Validation and mapping errors are caught per record, logged with context, and counted as skipped.
-- **Incremental after the first run.** The engine tracks a high-water mark — the latest `updated_at` timestamp it has seen — and asks Sage only for records updated or created since then.
-- **The Buki store is behind a small interface.** The current in-memory store is used for staging and tests; a production version can replace it with Buki's real ledger API or database without changing the sync engine.
+- **Money is stored in minor units.** £120.00 becomes `12000`. It looks like a small thing, but floats and money do not mix, and a ledger is the last place I want rounding drift.
+- **One bad record should not kill a sync.** Every record gets checked on its own. If it fails, it is logged with enough detail to find it later, counted as skipped, and the rest of the batch carries on.
+- **Repeat syncs are incremental.** The engine remembers the newest `updated_at` it has seen (I call it the high-water mark) and next time only asks Sage for records changed since then.
+- **The Buki store is a small, replaceable piece.** Right now it is in memory, which is perfect for tests and staging. Swapping it for Buki's real storage later should not mean touching the sync engine at all.
 
-## 5. Tech Stack
+## 5. Tech I used
 
-| Layer | Choice | Reason |
-|-------|--------|--------|
-| Language / runtime | TypeScript on Node.js 20+ | Typed payloads end to end; Node's built-in `fetch` is enough, so there is no HTTP-client dependency to maintain. |
-| Validation | Zod | Sage payloads and Buki records are both described as Zod schemas, so invalid data fails at the boundary with a readable error. |
-| HTTP server | Express | Small, familiar surface for the auth callback, health check and sync trigger. |
-| Tests | Vitest, with a mock Sage fetch | The four proof tests run with no network and no real Sage credentials. |
-| Packaging | Docker | The same image runs locally and on a staging host such as Render or Railway. |
+| Part | What I picked | Why |
+|------|---------------|-----|
+| Language | TypeScript on Node.js 20+ | I wanted the Sage payloads and the Buki records typed end to end. Node's built in `fetch` does everything I need, so I did not add an HTTP library just for this. |
+| Validation | Zod | Both sides, Sage in and Buki out, are described as schemas. When a payload is wrong, it fails at the door with an error I can actually read. |
+| Server | Express | It is only doing four or five jobs — the Sage callback, a health check, running a sync, showing what synced — so I kept it small and familiar. |
+| Tests | Vitest, with Sage faked | The four proof tests run with no network and no real Sage account. |
+| Packaging | Docker | The same image runs on my machine and on a staging host like Render or Railway. |
 
-Sage endpoints used (Accounting API v3.1, base URL `https://api.accounting.sage.com/v3.1`): `contacts`, `sales_invoices` and `contact_payments`.
-
----
-
-## 6. What Was Done in Three Days
-
-This section is the complete record of the first three days — what was planned, what was built, what was checked, and what was decided on each day.
-
-### Day 1 — Sunday 1 Nov 2026: Bootstrap, Schema and Sandbox Auth
-
-**Goal for the day:** Stand up the base connector and authenticate against the Sage sandbox.
-
-**Work done**
-
-1. **Project bootstrap**
-   - Created the TypeScript / Node project with a strict TypeScript configuration, an Express server entry point (`src/index.ts`) and a configuration loader (`src/config.ts`) that validates every environment variable with Zod and fails early on a bad value.
-   - Set up the project layout used for the rest of the build: `src/auth/`, `src/sage/`, `src/buki/` and `src/sync/`, plus a `tests/` folder.
-   - Added `.env.example` listing every Sage setting the connector needs (client ID, client secret, subscription key, redirect URI, auth URL, token URL, API base, scope) with no real values in the file, and a `.gitignore` that keeps `.env`, token data, `node_modules` and build output out of git.
-
-2. **OAuth2 PKCE implementation**
-   - Wrote the PKCE helpers in `src/auth/pkce.ts`: a random code verifier, its SHA-256 (S256) code challenge, and a random `state` value to protect the flow.
-   - Built the OAuth flow in `src/auth/oauth.ts`:
-     - `buildAuthorizeUrl()` — builds the Sage authorisation URL (`https://www.sageone.com/oauth2/auth/central?filter=apiv3.1`) with `client_id`, `response_type=code`, `redirect_uri`, `scope`, `state` and the code challenge.
-     - `exchangeCode()` — exchanges the authorisation code from the Sage callback for an access token and refresh token, sending the original code verifier so Sage can check it.
-     - `refresh()` — exchanges a refresh token for a new token set when the access token expires.
-     - `getValidAccessToken()` — returns the stored token if it is still valid, and refreshes it first if it has expired.
-     - `forceRefresh()` — used when Sage rejects a token that looked valid locally (an HTTP 401), so the client can recover without a human reconnecting the account.
-   - Added the server routes for the flow: `GET /auth/sage` redirects the user to Sage, and `GET /auth/sage/callback` completes the exchange.
-
-3. **Secure credential storage**
-   - Implemented a token store (`src/auth/tokenStore.ts`) with two implementations behind the same shape:
-     - A **file store** for local and staging use, which writes tokens to `.data/tokens.json` with owner-only file permissions (`0600`) in a git-ignored folder.
-     - An **in-memory store** for tests, so no test ever touches a real credential.
-   - Noted the production requirement in the code: the file store should be swapped for an encrypted, KMS-backed secret store. No Sage secret, token or password is committed to this repository.
-
-4. **Sandbox verification approach**
-   - The token handshake is verified against Sage's developer sandbox using a sandbox app's client ID, secret and subscription key supplied through the environment — never through code.
-   - Honest status: the flow, URLs, parameters and headers in this repository follow Sage's documented OAuth2 + PKCE flow and are exercised end to end against a mock Sage server in the test suite (including a simulated 401 and refresh). A live handshake against a real Sage sandbox tenant still requires sandbox credentials to be provided, so that live check is listed as a next step in Section 17 rather than claimed as done.
-
-**Result at the end of Day 1:** A connector skeleton that can start the Sage connect flow, exchange and store tokens, refresh them automatically, and serve a health check — with no credentials in the codebase.
+The Sage side is the Accounting API v3.1, base URL `https://api.accounting.sage.com/v3.1`. The endpoints I read are `contacts`, `sales_invoices` and `contact_payments`.
 
 ---
 
-### Day 2 — Monday 2 Nov 2026: Entity Mappings and Type Validation
+## 6. What I did in the first three days
 
-**Goal for the day:** Map the core ledger entities — customers, invoices and payments — to Buki schemas.
+This is the part the founder is reviewing, so I have written it the way it actually happened: what I set out to do each day, what I built, and where I landed by the end of it.
 
-**Work done**
+### Day 1 — Sunday 1 Nov 2026: Getting the connector up and sorting Sage auth
 
-1. **Sage payload schemas (`src/sage/schemas.ts`)**
-   - Described the Sage payloads the connector actually reads, using Zod:
-     - **Contact** — ID, display name, contact type, customer/supplier flags, status, email, address, credit limit and days, balance, currency, and `created_at` / `updated_at` timestamps.
-     - **Sales invoice** — ID, contact ID, dates, reference, status, currency, net / tax / total amounts, amount paid and outstanding, and its invoice lines.
-     - **Payment** — ID, contact ID, date, reference, total amount, currency and payment method.
-     - **List response** — Sage's paginated envelope (`$items`, `$total`, `$page`, `$next`, `$back`), shared by all three list endpoints.
-   - Handled real-world payload variation at the schema layer: money values are coerced to numbers (Sage returns them as strings on some endpoints), and a missing balance defaults to `0` instead of failing the record.
+My goal for day one was simple to say and fiddly to do: get a base connector standing, and get it talking to Sage's sandbox login.
 
-2. **Buki record schemas (`src/buki/schemas.ts`)**
-   - Defined the two Buki-side record types the sync produces:
-     - **Buki account** — external (Sage) ID, source, name, email, active/inactive status, currency, balance in minor units, credit limit in minor units, and last-updated timestamp.
-     - **Buki ledger entry** — external ID, account ID, kind (`invoice` or `payment`), dates, reference, status, currency, and net / tax / total / outstanding amounts, all in minor units.
-   - Added the single conversion helper used everywhere, `toMinor()`, which rounds a Sage amount to the nearest minor unit instead of truncating it.
+**Setting the project up**
 
-3. **Mappers (`src/buki/mappers.ts`)**
-   - `mapContactToBuki()` — converts a Sage contact into a Buki account, including translating Sage's `INACTIVE` status into Buki's `inactive` status and converting balance and credit limit into minor units.
-   - `mapInvoiceToBuki()` — converts a Sage sales invoice into a Buki ledger entry.
-   - `mapPaymentToBuki()` — converts a Sage payment into a Buki ledger entry marked as paid, with no outstanding amount.
-   - **The missing-tax decision:** an invoice whose `tax_amount` is missing cannot be reconciled in Buki (net + tax should equal total), so the mapper throws a specific `IngestionError` carrying the invoice ID, contact ID, net and total. The sync engine catches that error, logs it, and skips only that one record. It is never silently accepted, and it never crashes the pipeline. This behaviour is one of the four proof tests (Section 11).
+I started with a plain TypeScript and Node project, strict mode on, and split the code into the folders the rest of the work would live in: `src/auth/` for login, `src/sage/` for everything Sage sends and expects, `src/buki/` for Buki's side of the mapping, `src/sync/` for the engine, and `tests/` alongside.
 
-**Result at the end of Day 2:** Every Sage record the connector reads has a validated shape, a Buki shape, and a tested conversion between the two — including a deliberate, logged failure path for invoices with missing tax data.
+Configuration lives in `src/config.ts`. Every setting comes from an environment variable and gets validated when the app starts, so a typo in a config value fails loudly at boot instead of turning into a strange error halfway through a sync. The `.env.example` file lists all of them with empty values. Real secrets never go in the repo, and `.gitignore` keeps `.env` files, token data, `node_modules` and build output out of git.
+
+**The Sage login (OAuth2 with PKCE)**
+
+Sage does not let you just log in with a password and keep a key. It uses OAuth2, and I used the PKCE variant, which is the safer version of that flow. The pieces for it are in `src/auth/`:
+
+- `pkce.ts` makes the random code verifier, hashes it into the S256 code challenge, and makes the random `state` value that ties a login attempt together.
+- `oauth.ts` does the actual work. It builds the Sage sign in URL (`https://www.sageone.com/oauth2/auth/central?filter=apiv3.1`) with the client ID, redirect URI, scope, state and challenge on it. When Sage sends the user back with a one time code, it swaps that code, plus the original verifier, for an access token and a refresh token. It can also swap a refresh token for fresh tokens when the access token runs out, and it has a `forceRefresh()` path for the awkward case where Sage rejects a token that still looked fine on my side.
+- The server routes are `GET /auth/sage` to start the login and `GET /auth/sage/callback` to finish it.
+
+**Where the tokens live**
+
+Tokens are stored through a small interface in `src/auth/tokenStore.ts`, and I kept two versions of it. The file version writes to `.data/tokens.json` with owner only permissions (`0600`), in a folder git ignores. The memory version exists purely for tests, so no test ever goes near a real credential. The file version is fine for running this locally and on staging. If this goes to production it needs a proper encrypted secret store instead, and I have said so in the code rather than pretending a JSON file is good enough.
+
+**One honest note on the sandbox**
+
+The login flow in this repo follows Sage's documented flow exactly — same URLs, same parameters, same headers — and I test it end to end against a fake Sage server, including the part where a token gets rejected and has to be refreshed. What I have not done yet is a handshake against a real Sage sandbox tenant, because that needs sandbox app credentials (client ID, secret, subscription key) and I do not have a set to use. I would rather say that plainly here than claim a live check that has not happened. It is first on the list once credentials are available.
+
+By the end of day one I had a connector that boots, checks its own settings, starts and finishes the Sage login flow, looks after its own tokens, and answers a health check.
+
+### Day 2 — Monday 2 Nov 2026: Mapping Sage data into Buki's shape
+
+Day two was about the data itself: what Sage sends, what Buki wants, and how to get safely from one to the other.
+
+**Describing what Sage sends**
+
+In `src/sage/schemas.ts` I wrote Zod schemas for the three things I read from Sage, plus the envelope its list endpoints wrap them in (`$items`, `$total`, `$page`, `$next`):
+
+- A **contact**: ID, display name, whether it is a customer or supplier, status, email, address bits, credit limit and credit days, balance, currency, and the created and updated timestamps.
+- A **sales invoice**: ID, which contact it belongs to, dates, reference, status, currency, net, tax and total amounts, what has been paid, what is still outstanding, and the lines on the invoice.
+- A **payment**: ID, contact, date, reference, total amount, currency and payment method.
+
+Two small things in there came from looking closely at real payload shapes. Money does not always come back as a number — on some endpoints it arrives as a string — so the schemas accept both and turn it into a number. And a contact with no balance should mean zero, not an error, so that defaults to `0`.
+
+**Describing what Buki wants**
+
+`src/buki/schemas.ts` has the two record types the sync produces. A **Buki account** is a customer with its balance and credit limit converted into minor units. A **Buki ledger entry** is an invoice or a payment, again with every amount in minor units. There is one helper, `toMinor()`, that does that conversion everywhere, and it rounds rather than chops, because chopping a half penny the wrong way across thousands of invoices is exactly the kind of quiet error this project exists to prevent.
+
+**Joining the two together**
+
+The conversions live in `src/buki/mappers.ts`, one function per entity: contacts to accounts, invoices to ledger entries, payments to ledger entries. Most of it is straightforward field copying with the money converted on the way past. Status gets a translation too — Sage's `INACTIVE` becomes Buki's `inactive`.
+
+The one real decision of the day was what to do with an **invoice that has no tax amount**. In Buki, net plus tax should equal the total. If the tax figure is missing, I cannot check that, and guessing a number for a tax field felt genuinely wrong — that is the sort of quiet fix up that makes finance teams stop trusting a system. So I did the opposite: the mapper throws a specific error with the invoice ID, the contact, the net and the total attached. The sync engine catches it, writes it to the error log, skips that one invoice, and carries on with everything else. It is visible, it is findable, and it does not take the rest of the batch down with it. That behaviour became one of my four tests.
+
+By the end of day two, every record the connector touches had a shape on both sides and a checked path between them — including a path for the record that is supposed to fail.
+
+### Day 3 — Tuesday 3 Nov 2026: The sync engine, a sample run, tests, and the plan
+
+Day three was pulling it together: actually moving data, proving it with the sample batch, and getting the plan submitted.
+
+**Talking to Sage without falling over**
+
+`src/sage/client.ts` is the one place that makes requests to Sage. It adds the headers Sage expects — the Bearer token, JSON content type, and the developer subscription key when one is configured — and it deals with the two failures I knew were coming:
+
+- If Sage says `401`, the client forces a token refresh and tries the request once more with the new token. No human has to reconnect anything.
+- If Sage says `429` (too many requests), or a `5xx`, or the network drops, it waits and retries, doubling the wait each time with a bit of randomness mixed in. If Sage sends a `Retry-After` header, that wins and the client waits as long as Sage asked.
+- If it runs out of retries, it stops and raises a proper error with the status and the URL. I would rather a sync fail loudly than return half the data and pretend it finished.
+
+**The sync itself**
+
+The engine is in `src/sync/`. Sage's list endpoints are paged, so the client walks them with an async generator that follows the `$next` cursor, 100 records at a page, which keeps memory flat however big the account gets.
+
+A sync runs contacts first, then invoices, then payments, on purpose: by the time a ledger entry lands, the account it belongs to is already there. The first sync honours the assumptions from my plan — active accounts only, last 12 months. After that, the high-water mark kicks in and only changed records come across. Every record is validated and mapped individually, the failures go to the error log with their counts reported at the end, and everything is stored by its Sage ID, so running a sync twice updates records instead of duplicating them.
+
+Payments got one special bit of handling. The payments endpoint is the one that varies most between Sage setups, so if it answers `404` in a given tenant, the sync logs that payments are not available there and moves on. Contacts and invoices should not fail just because one tenant does payments differently.
+
+**Proving it on a sample batch**
+
+The server (`src/index.ts`) exposes the flow so I could actually watch it work: `POST /sync` runs a sync and reports what it did, and `GET /ledger` shows everything that landed in Buki — accounts, entries, and the error log — so I could eyeball it directly instead of trusting a success message.
+
+In the tests I ran the whole flow against the fake Sage with a batch of 100 customers, and the number that landed in Buki was exactly 100, with balances converted properly. There is more on the tests just below.
+
+**Tests**
+
+The test list came first — I wrote it in the Proof Notebook before the code, and it is in Section 11 below. The tests live in `tests/sync.test.ts` and run against a fake Sage in `tests/mockSage.ts` that can pretend to have an expired token, can flood back rate limit responses, and can hand over a broken invoice. All four pass, and the type check and the build are clean. I rechecked them again while writing this README, and I also booted the built server and hit `/health` and `/ledger` to make sure the thing that ships is the thing that runs.
+
+**Packaging it up and submitting the plan**
+
+Last, I added a `Dockerfile` so the connector runs the same way anywhere, wrote this README and the Proof Notebook, and got the plan — just the first 4 boxes — ready for the Day 3 deadline of Tuesday 3 Nov at 11:59 pm. The point of sending a plan this early is that the founder can tell me I am heading the wrong way now, while changing direction is still cheap. Which brings me to the question in Section 18.
 
 ---
 
-### Day 3 — Tuesday 3 Nov 2026: Polling Engine, Sample Sync, Tests and Plan Submission
+## 7. How the Sage login works
 
-**Goal for the day:** Run an end-to-end sync on a sample batch to verify data consistency, and submit the Day 3 plan.
+For anyone reviewing the auth code, the flow step by step:
 
-**Work done**
+1. You visit `GET /auth/sage` on this service.
+2. The service makes a random code verifier, hashes it into a code challenge, picks a random `state`, and remembers which verifier goes with which state.
+3. It redirects you to Sage with that challenge on the URL. You sign in to Sage and approve the connection for your business.
+4. Sage redirects you back to `GET /auth/sage/callback` with a one time code and the state.
+5. The service swaps the code, the verifier, the client ID and secret, and the redirect URI for tokens at Sage's token endpoint.
+6. Sage hands back an access token, a refresh token and an expiry, and the service stores them.
+7. From then on, calls go out with the access token attached. If it has expired, it is refreshed before the call. If Sage still says no with a `401`, one forced refresh and one retry happens automatically.
 
-1. **Resilient Sage API client (`src/sage/client.ts`)**
-   - Adds the headers every Sage request needs: the Bearer access token, `Content-Type: application/json`, and the developer subscription key (`ocp-apim-subscription-key`) when one is configured.
-   - **On HTTP 401:** forces one token refresh and retries the request once with the fresh token.
-   - **On HTTP 429, HTTP 5xx, or a network error:** retries with exponential backoff plus a small random jitter, and honours Sage's `Retry-After` header when Sage sends one.
-   - Gives up after a bounded number of attempts and raises a `SageApiError` with the status and URL, instead of looping forever.
+A small mismatch worth flagging: the config currently asks Sage for the `full_access` scope, even though this connector only ever reads. Tightening that to a read only scope is the sensible move for the first real version, and it ties into the founder's answer on Section 18.
 
-2. **Sync engine (`src/sync/engine.ts` and `src/sync/store.ts`)**
-   - Implemented as an async generator in the client (`paginate()`) that follows Sage's `$next` cursor page by page, requesting 100 items per page, so memory stays flat no matter how large the account is.
-   - A full sync runs in a fixed order: **contacts first, then sales invoices, then payments**, so ledger entries can always be matched to an account that already exists in Buki.
-   - **Historical scope applied:** on the first sync, inactive contacts are skipped and only the past 12 months are requested, per the assumptions in Section 3.
-   - **High-water mark:** the engine remembers the latest `updated_at` it has processed and passes it to Sage as `updated_or_created_since` on the next run, so repeat syncs are incremental.
-   - **Per-record safety:** every record is parsed with its Zod schema before it is mapped. A record that fails validation or mapping is counted as skipped and written to the Buki store's error log with its context; the rest of the batch continues.
-   - **Payments are isolated:** the payments endpoint name and availability vary between Sage tenants, so a `404` there is logged as “not available in this tenant — skipped” and does not fail the contacts and invoices sync.
-   - The Buki store (`BukiStore`) holds accounts and ledger entries keyed by their Sage IDs (so re-running a sync updates records instead of duplicating them) and keeps the full ingestion error log.
-
-3. **End-to-end sample sync check**
-   - Wired the engine to the HTTP server: `POST /sync` runs a full sync and returns the counts and error total; `GET /ledger` returns everything that landed in Buki (accounts, ledger entries and errors) so the result can be inspected directly; `GET /health` returns the service status and the current high-water mark.
-   - Ran the end-to-end flow against the mock Sage server in the test suite with a sample batch of 100 customers: the count in Buki matched the count in Sage exactly, and a sample customer's balance converted correctly into minor units (see Section 11).
-
-4. **Synthetic tests**
-   - Wrote the integration tests listed in Section 11, using a mock Sage fetch (`tests/mockSage.ts`) that can simulate an expired token, a burst of rate-limit responses and a malformed (missing-tax) payload — no network and no real credentials.
-   - All four proof tests pass, and the TypeScript build and type check are clean.
-
-5. **Packaging and plan submission**
-   - Added a `Dockerfile` so the connector can be run as a single container locally or deployed to a staging host such as Render or Railway.
-   - Wrote the Proof Notebook plan (the first 4 boxes) and this README, and formulated the founder question, ready to submit by the Day 3 deadline — Tuesday 3 Nov 2026, 11:59 pm — so the founder can review the direction and give feedback while course correction is still cheap.
-
-**Result at the end of Day 3:** A working, tested connector scaffold — auth, mappings, a resilient incremental sync, an inspectable result, and a container to deploy it — plus a plan ready to submit, with one clear question for the founder.
-
----
-
-## 7. Authentication — OAuth2 with PKCE
-
-Sage uses a three-legged OAuth 2.0 flow. This connector uses the PKCE extension (S256), so no shared secret needs to be embedded in a client.
-
-1. The user visits `GET /auth/sage` in this service.
-2. The service generates a random **code verifier**, hashes it into a **code challenge**, generates a random **state**, remembers the verifier against that state, and redirects the user to Sage's authorisation URL with the challenge.
-3. The user signs in to Sage and approves access for their business.
-4. Sage redirects back to `GET /auth/sage/callback` with a one-time **code** and the **state**.
-5. The service looks up the verifier for that state and exchanges the code, the verifier, the client ID and secret, and the redirect URI at Sage's token URL.
-6. Sage returns an **access token**, a **refresh token** and an expiry. The service stores them in the token store.
-7. API calls send the access token as a Bearer token. If it has expired, the service refreshes it automatically before the call. If Sage still returns `401`, the service forces one refresh and retries the call once.
-
-Scopes: the connector requests `full_access` in configuration by default but only performs reads. Narrowing this to Sage's read-only scope for the initial sync is part of the read-only assumption in Section 3 and will be confirmed with the founder's answer to the question in Section 18.
-
-## 8. Entity Mappings — Sage to Buki
+## 8. How Sage fields map to Buki fields
 
 ### Contact → Buki account
 
 | Sage (`contacts`) | Buki account | Notes |
 |-------------------|--------------|-------|
-| `id` | `externalId` | Also the deduplication key in Buki. |
-| — | `source` | Always set to `sage`. |
-| `displayed_as` | `name` | Sage's display name for the contact. |
-| `email` | `email` | Nullable in both systems. |
-| `status_id` | `status` | `INACTIVE` → `inactive`; anything else → `active`. |
-| `currency_id` | `currency` | Defaults to `GBP` if Sage omits it. |
-| `balance` | `balanceMinor` | Converted with `toMinor()`; a missing balance is treated as `0`. |
-| `credit_limit` | `creditLimitMinor` | Converted with `toMinor()`; stays `null` if Sage has no limit set. |
-| `updated_at` | `updatedAt` | Also feeds the sync high-water mark. |
+| `id` | `externalId` | Also the key Buki records are stored under, so re-syncing updates instead of duplicating. |
+| — | `source` | Always `sage`. |
+| `displayed_as` | `name` | |
+| `email` | `email` | Can be empty on both sides. |
+| `status_id` | `status` | `INACTIVE` becomes `inactive`, everything else is `active`. |
+| `currency_id` | `currency` | Falls back to `GBP` if Sage leaves it out. |
+| `balance` | `balanceMinor` | Converted with `toMinor()`. No balance from Sage means `0`. |
+| `credit_limit` | `creditLimitMinor` | Converted the same way, and stays `null` if Sage has no limit set. |
+| `updated_at` | `updatedAt` | This is also what the high-water mark is built from. |
 
 ### Sales invoice → Buki ledger entry
 
 | Sage (`sales_invoices`) | Buki ledger entry | Notes |
 |-------------------------|-------------------|-------|
-| `id` | `externalId` | Kind is set to `invoice`. |
-| `contact_id` | `accountExternalId` | Links the entry to the Buki account. |
-| `date` / `due_date` | `date` / `dueDate` | Due date is nullable. |
-| `reference` | `reference` | Nullable. |
-| `status_id` | `status` | Stored lower-cased, for example `paid`, `draft`. |
+| `id` | `externalId` | The kind on the entry is set to `invoice`. |
+| `contact_id` | `accountExternalId` | Which Buki account this entry belongs to. |
+| `date` / `due_date` | `date` / `dueDate` | Due date can be empty. |
+| `reference` | `reference` | Can be empty. |
+| `status_id` | `status` | Stored in lower case, so `paid`, `draft` and so on. |
 | `currency_id` | `currency` | |
 | `net_amount` | `netMinor` | Converted with `toMinor()`. |
-| `tax_amount` | `taxMinor` | **Required.** If it is missing, the record is logged and skipped (see Section 10). |
+| `tax_amount` | `taxMinor` | This one is required. Missing tax means the record is logged and skipped — see Section 10. |
 | `total_amount` | `totalMinor` | Converted with `toMinor()`. |
 | `amount_outstanding` | `outstandingMinor` | Converted with `toMinor()`. |
-| `updated_at` | `updatedAt` | Also feeds the high-water mark. |
+| `updated_at` | `updatedAt` | Feeds the high-water mark. |
 
 ### Payment → Buki ledger entry
 
 | Sage (`contact_payments`) | Buki ledger entry | Notes |
 |---------------------------|-------------------|-------|
-| `id` | `externalId` | Kind is set to `payment`. |
+| `id` | `externalId` | The kind on the entry is set to `payment`. |
 | `contact_id` | `accountExternalId` | |
-| `date` | `date` | No due date for a payment. |
-| `reference` | `reference` | Nullable. |
+| `date` | `date` | Payments do not have a due date. |
+| `reference` | `reference` | Can be empty. |
 | — | `status` | Set to `paid`. |
 | `currency_id` | `currency` | |
-| `total_amount` | `netMinor` and `totalMinor` | A payment carries no separate tax split in this mapping, so `taxMinor` is `0` and the outstanding amount is `0`. |
-| `updated_at` | `updatedAt` | Also feeds the high-water mark. |
+| `total_amount` | `netMinor` and `totalMinor` | A payment has no tax split in this mapping, so `taxMinor` is `0` and nothing is outstanding. |
+| `updated_at` | `updatedAt` | Feeds the high-water mark. |
 
-## 9. Sync Engine — How a Sync Runs
+## 9. How a sync actually runs
 
-1. `POST /sync` is called (in production this would be called by a scheduler or a background worker on an interval).
-2. The engine works out where to start from: its high-water mark if it has one, otherwise 12 months ago.
-3. It pages through Sage **contacts**, validates each one, maps it and upserts it into the Buki store, and advances the high-water mark.
-4. It then does the same for **sales invoices**, and then for **payments**.
-5. Any record that fails validation or mapping is logged with its context and counted as `skipped`. The sync continues.
-6. The call returns a summary: how many contacts, invoices and payments were synced, how many were skipped, and the new high-water mark.
+1. Something calls `POST /sync`. Right now that is me or a reviewer doing it by hand; in a real deployment a scheduler would call it.
+2. The engine works out where to start: from its high-water mark if it has one, otherwise 12 months back.
+3. It pages through Sage's contacts, checking, converting and storing each one, and moving the high-water mark forward as it goes.
+4. Then it does exactly the same for sales invoices, and then for payments.
+5. Anything that fails its checks on the way gets logged and counted as skipped. It does not stop the run.
+6. The call comes back with the numbers: how many contacts, invoices and payments synced, how many were skipped, and where the high-water mark has got to.
 
-Because records are upserted by their Sage ID, running a sync twice does not create duplicates.
+## 10. What happens when things go wrong
 
-## 10. Error Handling and Resilience
+| What happens | What the connector does |
+|--------------|-------------------------|
+| The access token has expired before a call | Refreshes it from the stored refresh token first, then makes the call. |
+| Sage still answers `401` | One forced refresh, then the call is retried once with the new token. |
+| Sage answers `429` | Backs off and retries, doubling the wait each time. If Sage sent a `Retry-After` header, it waits that long instead. |
+| Sage answers `5xx`, or the network drops | Same backoff and retry as a `429`, up to a set number of attempts. |
+| It runs out of retries | Stops and raises an error with the status and URL. The sync fails where everyone can see it. |
+| A record does not match its schema | Logged with the reason, counted as skipped, sync carries on. |
+| An invoice turns up with no `tax_amount` | Logged with a clear message saying the tax amount is missing, along with the invoice ID, contact, net and total. That invoice is skipped, everything else carries on. |
+| The payments endpoint answers `404` in a tenant | Logged as payments not being available in that tenant, and skipped. Contacts and invoices are not affected. |
 
-| Situation | Behaviour |
-|-----------|-----------|
-| Access token expired before a call | Refreshed automatically from the stored refresh token, then the call proceeds. |
-| Sage returns `401` anyway | One forced refresh, then the call is retried once with the new token. |
-| Sage returns `429` (rate limited) | Exponential backoff with jitter; Sage's `Retry-After` header is honoured when present. The request completes on a later retry. |
-| Sage returns `5xx`, or the network fails | Same backoff and retry path as `429`, up to a bounded number of attempts. |
-| Retries are exhausted | A `SageApiError` is raised with the status and URL, and the sync fails visibly instead of looping or silently returning partial data as if it were complete. |
-| A record fails Zod validation | Logged with the validation issues, counted as skipped, sync continues. |
-| An invoice has no `tax_amount` | A descriptive `IngestionError` is logged — invoice ID, contact ID, net and total — the record is skipped, and the sync continues. |
-| Payments endpoint returns `404` in a tenant | Logged as not available in that tenant and skipped; contacts and invoices are unaffected. |
+## 11. Tests I wrote first, and how they went
 
-## 11. Test List and Test Results
+I wrote this test list in the Proof Notebook before there was any code, because these four cases were the whole point of the connector as far as I was concerned. Each one is now a real test in `tests/sync.test.ts`, running against the fake Sage in `tests/mockSage.ts`.
 
-The test list below was written **before any code**, as part of the Proof Notebook. Each test is now implemented in `tests/sync.test.ts`, using the mock Sage server in `tests/mockSage.ts`.
-
-| # | Test (as originally listed) | Result |
-|---|-----------------------------|--------|
-| 1 | Simulate an invalid Sage OAuth token → receive `401` and trigger the refresh handshake. | **Pass.** The first API call returns `401`, exactly one token refresh call is made, and the retried call succeeds. |
-| 2 | Query 100 Sage customers → validate the Buki ledger mirrors the customer counts exactly. | **Pass.** 100 mock customers sync into exactly 100 Buki accounts, and a spot-checked balance converts correctly (£142.00 → `14200`). |
-| 3 | Send an invoice payload with a missing tax field → the ingestion pipeline logs a descriptive error without crashing. | **Pass.** The sync completes, the invoice is skipped, one error matching “missing tax_amount” is logged with the invoice ID, and the other records in the batch still sync. |
-| 4 | Simulate a Sage `429` rate limit → exponential backoff delays the request and it completes on retry. | **Pass.** Two `429` responses produce two recorded backoff delays on a growing exponential schedule, and the third attempt succeeds. |
-
-Run them with:
+| # | The test, as I originally wrote it down | How it went |
+|---|------------------------------------------|-------------|
+| 1 | Pretend the Sage token is invalid — the call should get a `401` and kick off the refresh, then work. | Passes. The first call gets the `401`, exactly one refresh happens, and the retry comes back fine. |
+| 2 | Pull 100 Sage customers and check Buki ends up with exactly the same count. | Passes. 100 in, 100 stored, and I spot checked one in the middle — customer 42's balance of £142.00 is sitting there as `14200`. |
+| 3 | Send an invoice with its tax field missing — the pipeline should log a proper error and not fall over. | Passes. The sync finishes, the invoice is skipped, the error in the log actually explains itself, and the customer in the same batch still syncs. |
+| 4 | Pretend Sage is rate limiting — the request should back off and still complete on a retry. | Passes. Two `429`s in a row produce two waits on the growing backoff schedule, and the third try gets through. |
 
 ```bash
 npm test
 ```
 
-Current result: **4 tests passed, 0 failed.** `npm run typecheck` and `npm run build` are also clean.
+Last run: 4 passed, 0 failed. `npm run typecheck` and `npm run build` are clean too.
 
-## 12. Project Structure
+## 12. What's in the repo
 
 ```
 buki-sage-connector/
-├── PROOF.md                  Day 3 plan submission (the first 4 boxes)
+├── PROOF.md                  The Day 3 plan submission (the first 4 boxes)
 ├── README.md                 This file
-├── Dockerfile                Single-container build for local / staging
-├── .env.example              Every setting, with no real values
+├── Dockerfile                Builds the connector as one container
+├── .env.example              Every setting, with the values left blank
 ├── package.json
 ├── tsconfig.json
 ├── src/
-│   ├── index.ts              Express server: /health, /auth/sage, /sync, /ledger
-│   ├── config.ts             Environment loading and validation (Zod)
+│   ├── index.ts              The server: /health, /auth/sage, /sync, /ledger
+│   ├── config.ts             Loads and checks the settings (Zod)
 │   ├── auth/
 │   │   ├── pkce.ts           Code verifier, S256 challenge, state
-│   │   ├── oauth.ts          Authorise URL, code exchange, refresh, 401 recovery
-│   │   └── tokenStore.ts     File store (0600) and in-memory store for tests
+│   │   ├── oauth.ts          Building the login URL, swapping codes, refreshing tokens
+│   │   └── tokenStore.ts     The file store (0600) and the in memory one tests use
 │   ├── sage/
-│   │   ├── schemas.ts        Zod schemas for Sage contacts, invoices, payments, lists
-│   │   └── client.ts         Sage API client: headers, 401 refresh, 429 backoff, pagination
+│   │   ├── schemas.ts        What Sage contacts, invoices, payments and lists look like
+│   │   └── client.ts         Talking to Sage: headers, 401 refresh, 429 backoff, paging
 │   ├── buki/
-│   │   ├── schemas.ts        Buki account and ledger schemas, minor-unit helper
-│   │   └── mappers.ts        Sage → Buki conversions, including the missing-tax error
+│   │   ├── schemas.ts        What a Buki account and a ledger entry look like
+│   │   └── mappers.ts        Turning Sage records into Buki ones, tax check included
 │   └── sync/
-│       ├── engine.ts         Full sync: contacts → invoices → payments, high-water mark
-│       └── store.ts          Buki store: accounts, ledger, ingestion error log
+│       ├── engine.ts         A full sync: contacts, then invoices, then payments
+│       └── store.ts          The Buki store and its error log
 └── tests/
-    ├── mockSage.ts           Mock Sage payloads and responses — no network, no credentials
+    ├── mockSage.ts           A fake Sage, so tests need no network and no account
     └── sync.test.ts          The four proof tests
 ```
 
-## 13. How to Run It
+## 13. Running it yourself
 
-Prerequisites: Node.js 20 or later, and a Sage developer app (sandbox is fine) with a client ID, client secret and subscription key.
+You will need Node.js 20 or later, and a Sage developer app — a sandbox one is fine — with a client ID, client secret and subscription key.
 
 ```bash
-cp .env.example .env    # fill in your Sage sandbox values
+cp .env.example .env    # put your Sage sandbox values in here
 npm install
-npm test                # run the four proof tests
-npm run dev             # start the connector on http://localhost:3000
+npm test                # the four proof tests
+npm run dev             # http://localhost:3000
 ```
 
 Then:
 
-1. Open `http://localhost:3000/auth/sage` — you are redirected to Sage to connect an account.
-2. After Sage redirects back, call `POST http://localhost:3000/sync` to run the first sync.
-3. Open `http://localhost:3000/ledger` to inspect the accounts, ledger entries and ingestion errors that landed in Buki.
-4. Call `POST /sync` again — only records changed since the high-water mark are pulled.
+1. Go to `http://localhost:3000/auth/sage` and you will be sent over to Sage to connect an account.
+2. Once Sage sends you back, run `POST http://localhost:3000/sync`.
+3. Have a look at `http://localhost:3000/ledger` — that is everything that arrived in Buki, plus anything that failed and why.
+4. Run the sync again and notice it only goes looking for things that changed since last time.
 
-## 14. API Endpoints
+For the production build instead of the dev server: `npm run build`, then `npm start`.
 
-| Method and path | What it does |
-|-----------------|--------------|
-| `GET /health` | Returns `{ ok: true, service, highWaterMark }`. Use it to confirm the service is up and to see how far the sync has reached. |
-| `GET /auth/sage` | Starts the Sage OAuth2 PKCE flow by redirecting to Sage. |
-| `GET /auth/sage/callback` | Sage's redirect target. Exchanges the code for tokens and stores them. |
-| `POST /sync` | Runs a full (or incremental, if a high-water mark exists) sync and returns the counts, skipped total and new high-water mark. |
-| `GET /ledger` | Returns all synced Buki accounts, ledger entries and ingestion errors. Intended for staging and inspection, not as a production Buki API. |
+## 14. The HTTP endpoints
 
-## 15. Configuration
+| Call | What it does |
+|------|--------------|
+| `GET /health` | Answers `{ ok: true, service, highWaterMark }`. The quickest way to check it is up, and how far syncing has got. |
+| `GET /auth/sage` | Starts the Sage login by redirecting you to Sage. |
+| `GET /auth/sage/callback` | Where Sage sends you back to. Swaps the code for tokens and stores them. |
+| `POST /sync` | Runs a sync — a full one the first time, an incremental one after that — and returns the counts. |
+| `GET /ledger` | Shows all the synced accounts, ledger entries and ingestion errors. This is for staging and for looking at what happened; it is not meant to be Buki's production API. |
 
-All configuration comes from environment variables (see `.env.example`). Nothing is hard-coded, and no real value should ever be committed.
+## 15. Settings
 
-| Variable | Meaning |
-|----------|---------|
-| `SAGE_CLIENT_ID` | Client ID of the Sage developer app. |
-| `SAGE_CLIENT_SECRET` | Client secret of the Sage developer app. |
-| `SAGE_SUBSCRIPTION_KEY` | Sage developer subscription key, sent as the `ocp-apim-subscription-key` header. |
-| `SAGE_REDIRECT_URI` | Must exactly match the redirect URI registered in the Sage app. Default: `http://localhost:3000/auth/sage/callback`. |
-| `SAGE_AUTH_URL` | Sage authorisation URL. Default: `https://www.sageone.com/oauth2/auth/central?filter=apiv3.1`. |
-| `SAGE_TOKEN_URL` | Sage token endpoint. Default: `https://oauth.accounting.sage.com/token`. |
-| `SAGE_API_BASE` | Sage Accounting API base. Default: `https://api.accounting.sage.com/v3.1`. |
-| `SAGE_SCOPE` | OAuth scope requested. Default: `full_access` (see the note in Section 7). |
-| `PORT` | Port the connector listens on. Default: `3000`. |
-| `SYNC_MONTHS_BACK` | Historical window for the first sync, in months. Default: `12`. |
-| `TOKEN_STORE_PATH` | Where the file token store writes. Default: `.data/tokens.json`. |
+Everything is set through environment variables, listed in `.env.example`. Nothing secret belongs in code, ever.
 
-## 16. Deployment — Staging
+| Variable | What it is |
+|----------|------------|
+| `SAGE_CLIENT_ID` | The client ID of your Sage developer app. |
+| `SAGE_CLIENT_SECRET` | Its client secret. |
+| `SAGE_SUBSCRIPTION_KEY` | Sage's developer subscription key. It goes out on requests as the `ocp-apim-subscription-key` header. |
+| `SAGE_REDIRECT_URI` | Where Sage sends people back to. It has to match what is registered in the Sage app, character for character. Defaults to `http://localhost:3000/auth/sage/callback`. |
+| `SAGE_AUTH_URL` | Sage's login URL. Defaults to `https://www.sageone.com/oauth2/auth/central?filter=apiv3.1`. |
+| `SAGE_TOKEN_URL` | Sage's token endpoint. Defaults to `https://oauth.accounting.sage.com/token`. |
+| `SAGE_API_BASE` | The API base. Defaults to `https://api.accounting.sage.com/v3.1`. |
+| `SAGE_SCOPE` | The scope asked for at login. Defaults to `full_access` — see the note in Section 7. |
+| `PORT` | The port this service listens on. Defaults to `3000`. |
+| `SYNC_MONTHS_BACK` | How far back the first sync reaches, in months. Defaults to `12`. |
+| `TOKEN_STORE_PATH` | Where tokens get written by the file store. Defaults to `.data/tokens.json`. |
+
+## 16. Putting it on a staging server
 
 ```bash
 docker build -t buki-sage-connector .
 docker run -p 3000:3000 --env-file .env buki-sage-connector
 ```
 
-The same Dockerfile can be deployed to Render or Railway as a single web service, with the variables from Section 15 set in that platform's dashboard instead of a `.env` file.
+The same Dockerfile works on Render or Railway as a single web service — just set the settings from Section 15 in their dashboard instead of using a `.env` file. One thing I should be straight about: I checked the Dockerfile's paths against the real build output in this repo, but I have not run an actual `docker build` in the environment I built this in, because Docker is not available there.
 
-## 17. Current Status, Limitations and Next Steps
+## 17. Where it stands, honestly
 
-**Done by the end of Day 3**
+What is actually done after three days:
 
-- Connector bootstrap, configuration and project layout.
-- OAuth2 PKCE flow with automatic refresh and 401 recovery.
-- Zod schemas for Sage contacts, sales invoices, payments and list responses.
-- Buki account and ledger schemas, with minor-unit money handling.
-- Sage → Buki mappers for all three entities, including the missing-tax failure path.
-- Resilient Sage client: auth headers, backoff on `429` / `5xx` / network errors, `Retry-After` support.
-- Incremental, cursor-paginated sync engine with a high-water mark and per-record error logging.
-- HTTP surface to connect an account, run a sync and inspect the result.
-- Four proof tests, all passing; type check and build clean.
-- Dockerfile for staging, Proof Notebook plan and this README.
+- The project is set up, the settings are checked at startup, and no credentials live in the code.
+- The Sage login flow works the way Sage documents it, refreshes itself, and recovers from a rejected token.
+- Every Sage record I read has a checked shape, and so does every Buki record it turns into.
+- The money handling is consistent — everything is minor units, rounded properly, converted in exactly one place.
+- A sync pages through Sage properly, runs in the right order, only pulls changes after the first run, and keeps a readable log of anything it had to skip.
+- The four tests I set myself at the start all pass, and the server that builds is the server that runs — I booted it and checked.
+- There is a container for staging, a plan the founder can read in PROOF.md, and this README.
 
-**Limitations — stated plainly**
+And what is not done, because I would rather list it than let anyone assume it:
 
-- **No live Sage tenant has been synced yet.** The flow is built to Sage's documented API and is fully exercised against a mock Sage server, but a live sandbox handshake needs sandbox credentials that have not been provided yet.
-- **The Buki store is in memory.** It proves the mapping and sync behaviour and is what the tests assert against; connecting it to Buki's real ledger storage is Build Phase work.
-- **Token storage is a local file.** Suitable for local and staging use only. Production needs an encrypted secret store.
-- **Payments coverage depends on the Sage tenant.** The payments endpoint differs between tenants, so that part of the sync is isolated and allowed to skip cleanly on a `404`.
-- **Custom Sage fields are out of scope** under the standard-schema assumption in Section 3.
+- **It has not spoken to a real Sage account yet.** Everything above is verified against a fake Sage that behaves the way the docs say Sage behaves. The live handshake needs sandbox credentials I do not have yet.
+- **Buki's side is an in memory store.** That is deliberate at this stage — it proves the mapping and the sync honestly — but wiring it into Buki's real ledger is build phase work.
+- **Tokens sit in a local file.** Fine for my machine and staging, not fine for production. Production gets an encrypted secret store.
+- **Payments are the shakiest part.** That endpoint varies between Sage setups, which is why the sync tolerates it being missing instead of failing.
+- **Custom fields are not covered.** That follows from my standard shapes assumption. A tenant with custom fields means extending the schemas.
 
-**Next steps in the Build Phase (around 10 days in total, with daily notes)**
+What comes next in the build phase, where I will keep logging daily notes:
 
-- Connect a real Sage sandbox tenant and verify the live OAuth handshake and a live sync.
-- Replace the in-memory Buki store with Buki's real ledger destination.
-- Move token storage to an encrypted secret store.
-- Add scheduled / background syncing instead of a manual `POST /sync` trigger.
-- Act on the founder's answer to the question below — in particular, whether any status needs to be written back to Sage.
+- Get sandbox credentials, connect a real Sage tenant, and watch a live sync happen.
+- Point the Buki store at the real destination.
+- Move the tokens somewhere encrypted.
+- Let a scheduler run the sync instead of me calling `POST /sync` by hand.
+- Act on the founder's answer to the question below.
 
-## 18. Open Question for the Founder
+## 18. The one question I need the founder to answer
 
-> **Does Buki require bidirectional status sync back to Sage, or read-only ingestion?**
+> Does Buki need status to sync back into Sage as well, or is read only ingestion enough?
 
-The connector is built read-only until this is answered. If Buki only needs clean, current data from Sage, the current design is sufficient and the scope stays small. If invoice or payment status in Buki must flow back into Sage, that adds write scopes, conflict handling (which system wins when both sides change a record), and a second test list — which is exactly why the question is asked at the plan stage, while course correction is still cheap.
+I have built this read only on purpose, and I need to know if that is right before I go further. If Buki just needs clean, current numbers out of Sage, then the shape of this thing is basically set and the rest is hardening. If what happens in Buki — an invoice marked paid, say — has to find its way back into Sage, that is a different and bigger job: write access, working out which system wins when both sides change the same record, and a second set of tests. It is a much better conversation to have now, at plan stage, than three weeks in.
