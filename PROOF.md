@@ -27,5 +27,5 @@ All four are implemented in `tests/sync.test.ts` and pass — see README for how
 Does Buki require bidirectional status sync back to Sage, or read-only ingestion?
 
 ## Your code
-GitHub: _paste the repo link here after pushing — repo is ready in this folder (`git init` + push, see README)_
+GitHub: https://github.com/anilkumara9/buki-sage-connector
 Local staging: `Dockerfile` included, deploys to Render / Railway as a single web service.
